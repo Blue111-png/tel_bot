@@ -40,4 +40,4 @@ function listTopics() {
   return "refunds, shipping, cancellations, payments, warranty";
 }
 
-module.exports = { matchFaq, listTopics };
+module.exports = { matchFaq, listTopics, FAQS };

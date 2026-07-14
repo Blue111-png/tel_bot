@@ -10,6 +10,7 @@ const { TelegramBot } = require("node-telegram-bot-api");
 const express = require("express");
 const db = require("./db");
 const faq = require("./faq");
+const ai = require("./ai");
 const { BOT_TOKEN, ADMIN_CHAT_ID } = require("./config");
 
 const useWebhook = !!process.env.RENDER_EXTERNAL_URL;
@@ -141,16 +142,27 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // 3) Otherwise, try the FAQ.
+ // 3) Otherwise, try the FAQ. If nothing matches, ask the AI instead of
+  //    just giving up — but always fall back gracefully if the AI call fails.
   const answer = faq.matchFaq(text);
   if (answer) {
     bot.sendMessage(chatId, answer);
   } else {
-    bot.sendMessage(
-      chatId,
-      "I'm not sure about that one. Choose an option below, or ask in different words.",
-      mainMenuKeyboard()
-    );
+    try {
+      const aiReply = await ai.askAI(text);
+      bot.sendMessage(
+        chatId,
+        aiReply || "I'm not sure about that one. Choose an option below, or ask in different words.",
+        mainMenuKeyboard()
+      );
+    } catch (err) {
+      console.error("AI fallback failed:", err.message);
+      bot.sendMessage(
+        chatId,
+        "I'm not sure about that one. Choose an option below, or ask in different words.",
+        mainMenuKeyboard()
+      );
+    }
   }
 });
 
