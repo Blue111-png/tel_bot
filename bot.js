@@ -7,11 +7,16 @@
 // saved now — the gap we found earlier.
 
 const { TelegramBot } = require("node-telegram-bot-api");
+const express = require("express");
 const db = require("./db");
 const faq = require("./faq");
 const { BOT_TOKEN, ADMIN_CHAT_ID } = require("./config");
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+const useWebhook = !!process.env.RENDER_EXTERNAL_URL;
+
+const bot = useWebhook
+  ? new TelegramBot(BOT_TOKEN)                     // no polling — Telegram will push to us
+  : new TelegramBot(BOT_TOKEN, { polling: true }); // local dev — same as before
 
 // Per-chat conversation state, kept in memory — this part is unchanged,
 // it's ephemeral UI state, not data that needs to survive a restart.
@@ -186,8 +191,34 @@ bot.onText(/\/history (\d+)/, async (msg, match) => {
   bot.sendMessage(msg.chat.id, `History for ticket #${ticketId}:\n${text}`);
 });
 
+// ---------------------------------------------------------- webhook server ---
+// Only runs when deployed on Render. Telegram will POST every incoming
+// update to this URL, waking the sleeping service if it had gone idle.
+if (useWebhook) {
+  const app = express();
+  app.use(express.json());
+
+  const webhookPath = `/webhook/${BOT_TOKEN}`; // token in the path = only Telegram knows it
+
+  app.post(webhookPath, (req, res) => {
+    bot.processUpdate(req.body); // same handlers (onText, on("message"), etc.) fire either way
+    res.sendStatus(200);
+  });
+
+  // Render's health check (and a manual visit) hits this — confirms the service is alive.
+  app.get("/", (req, res) => res.send("Support bot is running."));
+
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => {
+    const webhookUrl = `${process.env.RENDER_EXTERNAL_URL}${webhookPath}`;
+    bot.setWebhook(webhookUrl)
+      .then(() => console.log(`Webhook registered at ${webhookUrl}`))
+      .catch((err) => console.error("Failed to register webhook:", err.message));
+  });
+}
+
 db.initDb()
-  .then(() => console.log("Database ready. Bot starting (polling)..."))
+  .then(() => console.log(`Database ready. Bot starting (${useWebhook ? "webhook" : "polling"})...`))
   .catch((err) => {
     console.error("Failed to initialize database:", err.message);
     process.exit(1);
